@@ -3,9 +3,16 @@
 Field investigation by ElectroHire into three RustDesk defects found
 operating a small fleet of Pop!_OS 24.04 / COSMIC machines with
 RustDesk 1.5.1, including the `rustdesk-unattended-wayland` build (the
-DRM capture line from rustdesk/rustdesk PR #15420, merged upstream).
+DRM capture line from rustdesk/rustdesk
+[PR #15420](https://github.com/rustdesk/rustdesk/pull/15420), merged
+upstream).
 
-Filed upstream as three issues on rustdesk/rustdesk (links below).
+Filed upstream as three issues on rustdesk/rustdesk:
+
+1. [Greeter capture is blank](https://github.com/rustdesk/rustdesk/issues/17084)
+2. [Login handover drops the client](https://github.com/rustdesk/rustdesk/issues/17085)
+3. [Connection manager crashes per-session on COSMIC](https://github.com/rustdesk/rustdesk/issues/17086)
+
 This repo is the evidence package behind them: the full code-traced
 analysis, the re-analysis against the complete field record, the
 first-hand scoring of the greeter server's own logs, and a prototype
@@ -13,7 +20,8 @@ patch.
 
 ## The three findings
 
-1. **Greeter capture is blank.** At the COSMIC greeter (greetd +
+1. **Greeter capture is blank.**
+   ([upstream issue #17084](https://github.com/rustdesk/rustdesk/issues/17084)) At the COSMIC greeter (greetd +
    cosmic-greeter), connections authenticate but deliver black frames
    forever. The greeter server's own logs prove every connection was
    captured by the X11 scrap capturer and the DRM/Wayland path was
@@ -22,12 +30,14 @@ patch.
    `XDG_SESSION_TYPE` and defaults to "x11", and `is_gdm_user` does
    not recognize `cosmic-greeter`, so the designed greeter spawn never
    happens either.
-2. **Login handover drops the client.** When the user logs in, the
+2. **Login handover drops the client.**
+   ([upstream issue #17085](https://github.com/rustdesk/rustdesk/issues/17085)) When the user logs in, the
    greeter server is replaced by the user-session server; the client
    gets "Reset by the peer" and must reconnect manually, because the
    host-side transition never sends the "restarting" event the
    client's existing auto-reconnect machinery waits for.
-3. **The connection manager crashes per-session on COSMIC.** On a
+3. **The connection manager crashes per-session on COSMIC.**
+   ([upstream issue #17086](https://github.com/rustdesk/rustdesk/issues/17086)) On a
    COSMIC Wayland session, the `--cm` Flutter process crashes within
    seconds of every session start (two distinct crash signatures,
    plus GStreamer assertions on the PipeWire path), resetting every
