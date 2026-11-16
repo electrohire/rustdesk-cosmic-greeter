@@ -13,6 +13,28 @@ Filed upstream as three issues on rustdesk/rustdesk:
 2. [Login handover drops the client](https://github.com/rustdesk/rustdesk/issues/17085)
 3. [Connection manager crashes per-session on COSMIC](https://github.com/rustdesk/rustdesk/issues/17086)
 
+Related upstream reports, found by a wider duplicate check after
+filing:
+
+- [#16891](https://github.com/rustdesk/rustdesk/issues/16891) reported
+  the same greeter symptom on COSMIC/greetd (different hardware) and
+  was fixed by
+  [#16894](https://github.com/rustdesk/rustdesk/pull/16894), merged
+  2026-11-08: its cause section names the same two classification
+  defects traced here, and the reporter confirmed the fix on their
+  machine. Our issue #17084 stands as a second-hardware confirmation
+  on the 1.5.1 release build; our prototype patch is superseded by
+  #16894's approach, and verifying a build containing #16894 on the
+  affected host (cold boot straight to the greeter included) is the
+  open step.
+- [#15892](https://github.com/rustdesk/rustdesk/issues/15892) covered
+  the logout direction of the handover seam in issue #17085 and is
+  closed.
+- [#16297](https://github.com/rustdesk/rustdesk/issues/16297) reported
+  the `--cm` EGL crash family on KDE Plasma (Intel) and is closed;
+  issue #17086 is the COSMIC (NVIDIA) environment, with an additional
+  crash signature.
+
 This repo is the evidence package behind them: the full code-traced
 analysis, the re-analysis against the complete field record, the
 first-hand scoring of the greeter server's own logs, and a prototype
