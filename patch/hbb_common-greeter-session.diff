@@ -1,0 +1,163 @@
+diff --git a/src/platform/linux.rs b/src/platform/linux.rs
+index d4b29bb..cdc01d9 100644
+--- a/src/platform/linux.rs
++++ b/src/platform/linux.rs
+@@ -115,8 +115,25 @@ pub fn is_kde_session() -> bool {
+ 
+ #[inline]
+ pub fn is_gdm_user(username: &str) -> bool {
+-    username == "gdm" || username == "sddm"
+-    // || username == "lightgdm"
++    // Usernames display managers run their greeter session as. `gdm` is the
++    // historic GDM greeter account; a current GDM uses `gdm-greeter`. LightDM's
++    // account is `lightdm`, and greetd-based greeters use `cosmic-greeter`
++    // (COSMIC) or plain `greeter`.
++    matches!(
++        username,
++        "gdm" | "gdm-greeter" | "sddm" | "lightdm" | "cosmic-greeter" | "greeter"
++    )
++}
++
++// Whether the logind session is a display-manager greeter session.
++// Greeter usernames drift as display managers rename their greeter account;
++// the session class does not, and greetd/GDM/SDDM all set it.
++pub fn is_greeter_session(session: &str) -> bool {
++    if let Ok(output) = run_loginctl(Some(vec!["show-session", "-p", "Class", session])) {
++        String::from_utf8_lossy(&output.stdout).trim() == "Class=greeter"
++    } else {
++        false
++    }
+ }
+ 
+ #[inline]
+@@ -164,6 +181,41 @@ pub fn get_display_server() -> String {
+     }
+ }
+ 
++// `XDG_SESSION_TYPE` in a NUL-separated process environment (the format of
++// /proc/<pid>/environ), lowercased. None when unset or empty.
++fn session_type_from_environ(environ: &[u8]) -> Option<String> {
++    for entry in environ.split(|b| *b == 0) {
++        if let Some(value) = entry.strip_prefix(b"XDG_SESSION_TYPE=") {
++            let value = String::from_utf8_lossy(value).trim().to_lowercase();
++            if !value.is_empty() {
++                return Some(value);
++            }
++        }
++    }
++    None
++}
++
++// The session type the session leader was started with, read from its own
++// environment. This is the only place the type survives when logind reports
++// the session Type as "tty"/"unspecified" (greeter sessions commonly land
++// there): a service-spawned process runs outside the session it asks about,
++// so its own environment says nothing about that session. Reading the
++// leader's environment needs root or the session user's uid, which are
++// exactly the callers that resolve session types; degrade to None on any
++// failure.
++fn get_session_type_from_leader(session: &str) -> Option<String> {
++    let output = run_loginctl(Some(vec!["show-session", "-p", "Leader", session])).ok()?;
++    let leader = String::from_utf8_lossy(&output.stdout)
++        .replace("Leader=", "")
++        .trim()
++        .to_owned();
++    if leader.parse::<u32>().is_err() {
++        return None;
++    }
++    let environ = std::fs::read(format!("/proc/{}/environ", leader)).ok()?;
++    session_type_from_environ(&environ)
++}
++
+ pub fn get_display_server_of_session(session: &str) -> String {
+     let mut display_server = if let Ok(output) =
+         run_loginctl(Some(vec!["show-session", "-p", "Type", session]))
+@@ -177,6 +229,15 @@ pub fn get_display_server_of_session(session: &str) -> String {
+         "".to_owned()
+     };
+     if display_server.is_empty() || display_server == "tty" || display_server == "unspecified" {
++        // logind has no real type for this session. Resolve the type the
++        // session itself was started with (its leader's environment) before
++        // this process's own `XDG_SESSION_TYPE`: a service-spawned caller
++        // runs outside the session, so its environment is unset by
++        // construction and falling back to it defaults a Wayland session
++        // (a greeter, classically) to "x11".
++        if let Some(sestype) = get_session_type_from_leader(session) {
++            return sestype;
++        }
+         if let Ok(sestype) = std::env::var("XDG_SESSION_TYPE") {
+             if !sestype.is_empty() {
+                 return sestype.to_lowercase();
+@@ -220,7 +281,8 @@ fn _get_values_of_seat0(indices: &[usize], ignore_gdm_wayland: bool) -> Vec<Stri
+                 if let Some(sid) = line.split_whitespace().next() {
+                     if is_active(sid) {
+                         if ignore_gdm_wayland {
+-                            if is_gdm_user(line.split_whitespace().nth(2).unwrap_or(""))
++                            if (is_gdm_user(line.split_whitespace().nth(2).unwrap_or(""))
++                                || is_greeter_session(sid))
+                                 && get_display_server_of_session(sid) == DISPLAY_SERVER_WAYLAND
+                             {
+                                 continue;
+@@ -241,7 +303,8 @@ fn _get_values_of_seat0(indices: &[usize], ignore_gdm_wayland: bool) -> Vec<Stri
+                 if is_active(sid) {
+                     let d = get_display_server_of_session(sid);
+                     if ignore_gdm_wayland {
+-                        if is_gdm_user(line.split_whitespace().nth(2).unwrap_or(""))
++                        if (is_gdm_user(line.split_whitespace().nth(2).unwrap_or(""))
++                            || is_greeter_session(sid))
+                             && d == DISPLAY_SERVER_WAYLAND
+                         {
+                             continue;
+@@ -538,6 +601,52 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn test_is_gdm_user_greeter_usernames() {
++        for username in [
++            "gdm",
++            "gdm-greeter",
++            "sddm",
++            "lightdm",
++            "cosmic-greeter",
++            "greeter",
++        ] {
++            assert!(
++                is_gdm_user(username),
++                "{} should be a greeter user",
++                username
++            );
++        }
++        for username in ["", "root", "tpierson", "gdm2", "xgreeter"] {
++            assert!(
++                !is_gdm_user(username),
++                "{} should not be a greeter user",
++                username
++            );
++        }
++    }
++
++    #[test]
++    fn test_session_type_from_environ() {
++        let environ = b"DISPLAY=:0\0XDG_SESSION_TYPE=wayland\0HOME=/var/lib/cosmic-greeter\0";
++        assert_eq!(
++            session_type_from_environ(environ),
++            Some("wayland".to_owned())
++        );
++        // The value is lowercased, matching get_display_server_of_session.
++        assert_eq!(
++            session_type_from_environ(b"XDG_SESSION_TYPE=Wayland\0"),
++            Some("wayland".to_owned())
++        );
++        // Unset, empty, and merely similar keys do not resolve a type.
++        assert_eq!(session_type_from_environ(b"DISPLAY=:0\0"), None);
++        assert_eq!(session_type_from_environ(b"XDG_SESSION_TYPE=\0"), None);
++        assert_eq!(
++            session_type_from_environ(b"XDG_SESSION_TYPEX=wayland\0MY_XDG_SESSION_TYPE=x11\0"),
++            None
++        );
++    }
++
+     /// Test shell_quote with normal strings
+     #[test]
+     fn test_shell_quote_normal() {

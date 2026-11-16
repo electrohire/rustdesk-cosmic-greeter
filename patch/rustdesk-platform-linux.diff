@@ -1,0 +1,60 @@
+diff --git a/src/platform/linux.rs b/src/platform/linux.rs
+index 66ac254b..c69bd22c 100644
+--- a/src/platform/linux.rs
++++ b/src/platform/linux.rs
+@@ -205,7 +205,8 @@ pub fn is_headless_allowed() -> bool {
+ #[inline]
+ pub fn is_login_screen_wayland() -> bool {
+     let values = get_values_of_seat0_with_gdm_wayland(&[0, 2]);
+-    is_gdm_user(&values[1]) && get_display_server_of_session(&values[0]) == DISPLAY_SERVER_WAYLAND
++    (is_gdm_user(&values[1]) || is_greeter_session(&values[0]))
++        && get_display_server_of_session(&values[0]) == DISPLAY_SERVER_WAYLAND
+ }
+ 
+ #[inline]
+@@ -957,10 +958,11 @@ pub fn start_os_service() {
+                 force_stop_server();
+                 // Run the login-screen --server as the active seat0 session user (the greeter
+                 // account) rather than root, so the DRM capture GPU/EGL convert never loads the
+-                // vendor GPU userspace in a privileged process. is_login_wayland() matches a GDM or
+-                // SDDM Wayland greeter (is_gdm_user covers both), and desktop.uid is that greeter's
+-                // uid, so this drops to whichever greeter owns seat0. A greeter is_gdm_user does not
+-                // recognize (e.g. LightDM) never reaches this branch -- it takes the unprivileged
++                // vendor GPU userspace in a privileged process. is_login_wayland() matches a
++                // Wayland greeter session (is_gdm_user covers the GDM/SDDM/LightDM/COSMIC
++                // greeter accounts, or the session's logind class is greeter), and desktop.uid
++                // is that greeter's uid, so this drops to whichever greeter owns seat0. A greeter
++                // neither test recognizes never reaches this branch -- it takes the unprivileged
+                 // else-branch below already. A genuine root graphical session (username=="root")
+                 // has no lower uid to drop to, so it stays root. The whole branch is gated on the drm
+                 // feature, so the drm-off build is upstream's single `start_server(None, ..)` line.
+@@ -1801,7 +1803,10 @@ mod desktop {
+ 
+         #[inline]
+         pub fn is_login_wayland(&self) -> bool {
+-            super::is_gdm_user(&self.username) && self.protocol == DISPLAY_SERVER_WAYLAND
++            // The greeter half is a username test or, for greeter accounts
++            // `is_gdm_user` does not know, the session's logind class.
++            (super::is_gdm_user(&self.username) || super::is_greeter_session(&self.sid))
++                && self.protocol == DISPLAY_SERVER_WAYLAND
+         }
+ 
+         #[inline]
+@@ -2095,11 +2100,12 @@ mod desktop {
+                 // which is the entire reason it works at a login screen. `try_start_server_` skips
+                 // empty entries, so the greeter child simply does not get them.
+                 //
+-                // `is_login_wayland` needs `is_gdm_user(username)`, and a current GDM runs its
+-                // greeter as `gdm-greeter`, which that helper does not match -- measured on the
+-                // test host, where the greeter server therefore takes the branch below and gets a
+-                // fully populated environment. This is for the display managers whose greeter user
+-                // does match.
++                // `is_login_wayland` needs the session to read as a greeter session
++                // (`is_gdm_user(username)` or logind Class=greeter). That pairing used to
++                // cover only GDM's historic `gdm` account and SDDM: a current GDM runs its
++                // greeter as `gdm-greeter` and COSMIC's runs as `cosmic-greeter`, and those
++                // greeter servers took the branch below and got a fully populated
++                // environment -- measured on the test host.
+                 #[cfg(feature = "drm")]
+                 self.get_home();
+                 return;
